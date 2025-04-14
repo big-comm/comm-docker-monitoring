@@ -1,0 +1,45 @@
+# Maintainer: Tales A. Mendonça <talesam@gmail.com>
+# Maintainer: Leonardo Berbert  <leo4berbert@gmail.com>
+
+pkgname=comm-docker-monitoring
+pkgdesc="Containerized monitoring solution using Grafana, Prometheus, and cAdvisor for Docker containers with pre-configured dashboards."
+depends=('comm-docker-config')
+pkgver=$(date +%y.%m.%d)
+pkgrel=$(date +%H%M)
+arch=('any')
+license=('MIT')
+url="https://github.com/communitybig/$pkgname"
+provides=("$pkgname")
+source=("git+${url}.git")
+md5sums=('SKIP')
+
+if [ -e "${pkgname}.install" ]; then
+    install=${pkgname}.install
+elif [ -e "pkgbuild.install" ]; then
+    install=pkgbuild.install
+fi
+
+package() {
+    # Define source directory
+    local sourcedir="${srcdir}/${pkgname}"
+
+    # Copy standard directories if they exist
+    for dir in "usr" "etc" "opt"; do
+        if [ -d "${sourcedir}/${dir}" ]; then
+            echo "Copying ${dir} to package directory..."
+            cp -r "${sourcedir}/${dir}" "${pkgdir}/"
+        fi
+    done
+
+    # Install license file if present
+    if [ -f "${sourcedir}/LICENSE" ]; then
+        echo "Installing license file..."
+        install -Dm644 "${sourcedir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    fi
+
+    # Install README documentation if present
+    if [ -f "${sourcedir}/README.md" ]; then
+        echo "Installing README documentation..."
+        install -Dm644 "${sourcedir}/README.md" "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+    fi
+}

@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+
+# Get the current non-root user
+CURRENT_USER=$(who | awk 'NR==1{print $1}')
+CONFIG_DIR="/etc/docker-biglinux/comm-docker-monitoring"
+
+# Color definitions for status messages
+blueDark="\e[1;38;5;33m"     # Bold dark blue
+mediumBlue="\e[1;38;5;32m"   # Bold medium blue
+lightBlue="\e[1;38;5;39m"    # Bold light blue
+cyan="\e[1;38;5;45m"         # Bold cyan
+white="\e[1;97m"             # Bold white
+reset="\e[0m"                # Reset text formatting
+
+# Additional colors for warnings/errors
+red="\e[1;31m"               # Bold red for errors
+yellow="\e[1;33m"            # Bold yellow for warnings
+green="\e[1;32m"             # Bold green for success
+
+# Print status messages
+printMsg() {
+    local message="$1"
+    echo -e "${blueDark}[${lightBlue}DOCKER-MONITORING${blueDark}]${reset} ${cyan}→${reset} ${white}${message}${reset}"
+}
+
+# Print success messages
+printOk() {
+    local message="$1"
+    echo -e "${blueDark}[${green}SUCCESS${blueDark}]${reset} ${cyan}→${reset} ${white}${message}${reset}"
+}
+
+# Print warning messages
+printWarn() {
+    local message="$1"
+    echo -e "${blueDark}[${yellow}WARNING${blueDark}]${reset} ${cyan}→${reset} ${white}${message}${reset}"
+}
+
+# Print error messages
+printErr() {
+    local message="$1"
+    echo -e "${blueDark}[${red}ERROR${blueDark}]${reset} ${cyan}→${reset} ${white}${message}${reset}"
+    return 1
+}
+
+# Function to check if a command is available
+check_cmd() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        printErr "Command '$1' is not installed. Please install it before continuing."
+        exit 1
+    fi
+}
+
+# Function to create directories if they don't exist
+create_dir() {
+    local dir=$1
+    if [ ! -d "$dir" ]; then
+        printMsg "Creating directory: $dir"
+        mkdir -p "$dir"
+    else
+        printMsg "Directory already exists: $dir"
+    fi
+}
+
+# Function to copy files if they don't exist
+copy_file() {
+    local src=$1
+    local dest=$2
+    if [ ! -f "$dest" ]; then
+        printMsg "Copying file: $src -> $dest"
+        cp -r "$src" "$dest"
+    else
+        printMsg "File already exists: $dest"
+    fi
+}
+
+# Function to set permissions for created directories
+set_permissions() {
+    local path=$1
+    printMsg "Setting permissions for: $path"
+    chown -R "$CURRENT_USER:$CURRENT_USER" "$path"
+    chmod -R 755 "$path"
+}
+
+# Function to set specific ownerships for Grafana and Prometheus data
+set_data_permissions() {
+    printMsg "Setting ownership for Grafana data directory..."
+    sudo chown -R 472:472 "/home/$CURRENT_USER/Docker/Monitoring/Grafana/data"
+
+    printMsg "Setting ownership for Prometheus data directory..."
+    sudo chown -R 65534:65534 "/home/$CURRENT_USER/Docker/Monitoring/Prometheus/data"
+}
+
+# Executed after package installation
+post_install() {
+    printMsg "Starting installation process..."
+
+    # Check if required commands are available
+    check_cmd "docker"
+    check_cmd "docker-compose"
+
+    # Create necessary directories for Grafana and Prometheus
+    printMsg "Checking and creating necessary directories..."
+    create_dir "/home/$CURRENT_USER/Docker/Monitoring/Grafana/data"
+    create_dir "/home/$CURRENT_USER/Docker/Monitoring/Grafana/config/provisioning/dashboards"
+    create_dir "/home/$CURRENT_USER/Docker/Monitoring/Grafana/config/provisioning/datasources"
+    create_dir "/home/$CURRENT_USER/Docker/Monitoring/Prometheus/data"
+    create_dir "/home/$CURRENT_USER/Docker/Monitoring/Prometheus/config"
+
+    # Copy configuration files
+    printMsg "Checking and copying configuration files..."
+    copy_file "$CONFIG_DIR/grafana/config/provisioning/dashboards/provisioning.yml" "/home/$CURRENT_USER/Docker/Monitoring/Grafana/config/provisioning/dashboards/provisioning.yml"
+    copy_file "$CONFIG_DIR/grafana/config/provisioning/dashboards/14282_rev1.json" "/home/$CURRENT_USER/Docker/Monitoring/Grafana/config/provisioning/dashboards/14282_rev1.json"
+    copy_file "$CONFIG_DIR/grafana/config/provisioning/datasources/datasource.yml" "/home/$CURRENT_USER/Docker/Monitoring/Grafana/config/provisioning/datasources/datasource.yml"
+    copy_file "$CONFIG_DIR/prometheus/config/prometheus.yml" "/home/$CURRENT_USER/Docker/Monitoring/Prometheus/config/prometheus.yml"
+
+    # Adjust permissions
+    set_permissions "/home/$CURRENT_USER/Docker/Monitoring"
+
+    # Set ownership for Grafana and Prometheus data directories
+    set_data_permissions
+
+    # Create symbolic link for docker-compose.yml
+    printMsg "Creating symbolic link for docker-compose.yml..."
+    ln -sf "$CONFIG_DIR/compose-monitor.yml" "/home/$CURRENT_USER/Docker/Monitoring/docker-compose.yml"
+
+    # Start Docker services
+    printMsg "Starting Docker services..."
+    HOME=/home/$CURRENT_USER docker compose -f /home/$CURRENT_USER/Docker/Monitoring/docker-compose.yml up -d
+    if [ $? -ne 0 ]; then
+        printErr "Error starting Docker services."
+        exit 1
+    fi
+
+    printOk "Installation completed! Services are running."
+}
+
+# Upgrade the package
+post_upgrade() {
+    printMsg "Upgrading the package..."
+    post_install
+}
+
+# Executed before package removal
+pre_remove() {
+    printMsg "Stopping and removing Docker services..."
+    HOME=/home/$CURRENT_USER docker compose -f /home/$CURRENT_USER/Docker/Monitoring/docker-compose.yml down
+    if [ $? -ne 0 ]; then
+        printErr "Error stopping Docker services."
+        exit 1
+    fi
+
+    printMsg "Removing configuration and data directories..."
+    rm -rf "/home/$CURRENT_USER/Docker/Monitoring"
+    printOk "Services and files removed successfully."
+}
+
+# Executed after package removal
+post_remove() {
+    printMsg "Removing related Docker images..."
+    docker rmi gcr.io/cadvisor/cadvisor:latest || printWarn "Error removing cadvisor image."
+    docker rmi prom/prometheus:latest || printWarn "Error removing prometheus image."
+    docker rmi grafana/grafana:latest || printWarn "Error removing grafana image."
+
+    printOk "Docker images removed successfully."
+}
